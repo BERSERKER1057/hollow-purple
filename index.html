@@ -79,10 +79,13 @@ function palmPos(lm){
   const ids=[0,5,9,13,17];
   let sx=0,sy=0;
   ids.forEach(i=>{sx+=lm[i].x;sy+=lm[i].y});
+  // x is already flipped via (1 - x) to match mirrored video
   return{x:(1-sx/5)*W, y:sy/5*H};
 }
 function palmR(lm){
-  return Math.hypot((lm[9].x-lm[0].x)*W,(lm[9].y-lm[0].y)*H)*1.1;
+  const scaleX=(lm[9].x-lm[0].x)*W;
+  const scaleY=(lm[9].y-lm[0].y)*H;
+  return Math.hypot(scaleX,scaleY)*1.0;
 }
 
 // ── Particles ────────────────────────────────────────────────────────────────
@@ -232,10 +235,15 @@ function loop(ts){
   frameN++;
   const t=(ts-t0)/1000;
 
-  // Draw camera feed (mirrored)
+  // Draw camera feed (mirrored, cover fit)
   ctx.save();
   ctx.translate(W,0);ctx.scale(-1,1);
-  ctx.drawImage(vid,0,0,W,H);
+  const vr=vid.videoWidth/vid.videoHeight;
+  const cr=W/H;
+  let dw=W,dh=H,dx=0,dy=0;
+  if(vr>cr){dh=H;dw=H*vr;dx=-(dw-W)/2;}
+  else{dw=W;dh=W/vr;dy=-(dh-H)/2;}
+  ctx.drawImage(vid,dx,dy,dw,dh);
   ctx.restore();
 
   // Dark overlay
