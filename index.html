@@ -2,415 +2,338 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Hollow Purple</title>
 <style>
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { background:#000; overflow:hidden; font-family:'Segoe UI',sans-serif; }
-  #container { position:relative; width:100vw; height:100vh; }
-  video { position:absolute; top:0; left:0; width:100%; height:100%; object-fit:cover; transform:scaleX(-1); opacity:0; }
-  canvas { position:absolute; top:0; left:0; width:100%; height:100%; }
-  #hud { position:absolute; bottom:16px; left:50%; transform:translateX(-50%);
-         color:rgba(180,180,180,0.7); font-size:13px; letter-spacing:2px; text-transform:uppercase; }
-  #start { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
-           background:rgba(100,0,200,0.15); border:1px solid rgba(180,0,255,0.4);
-           color:#fff; font-size:18px; padding:16px 40px; border-radius:40px;
-           cursor:pointer; letter-spacing:3px; backdrop-filter:blur(8px);
-           transition:all 0.3s; }
-  #start:hover { background:rgba(140,0,255,0.3); border-color:rgba(200,0,255,0.8); }
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;overflow:hidden}
+#c{display:block;width:100vw;height:100vh}
+#ui{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;color:#fff;font-family:sans-serif}
+#btn{padding:14px 36px;font-size:16px;letter-spacing:3px;background:rgba(120,0,255,.2);
+     border:1px solid rgba(180,0,255,.6);color:#fff;border-radius:40px;cursor:pointer}
+#btn:hover{background:rgba(160,0,255,.4)}
+#hint{position:fixed;bottom:14px;width:100%;text-align:center;color:rgba(160,160,160,.7);
+      font-family:sans-serif;font-size:12px;letter-spacing:2px;pointer-events:none}
 </style>
 </head>
 <body>
-<div id="container">
-  <video id="vid" autoplay playsinline></video>
-  <canvas id="c"></canvas>
-  <div id="hud">BLUE: Right Hand &nbsp;|&nbsp; RED: Left Hand &nbsp;|&nbsp; Bring Together = HOLLOW PURPLE</div>
-  <button id="start">⚡ ACTIVATE</button>
+<canvas id="c"></canvas>
+<div id="ui">
+  <button id="btn">⚡ ACTIVATE</button>
 </div>
+<div id="hint">BLUE: RIGHT HAND &nbsp;|&nbsp; RED: LEFT HAND &nbsp;|&nbsp; MERGE = HOLLOW PURPLE</div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
 <script type="module">
-import { FilesetResolver, HandLandmarker } from
-  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/vision_bundle.mjs";
+import{FilesetResolver,HandLandmarker}from
+"https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/vision_bundle.mjs";
 
-const vid    = document.getElementById('vid');
-const canvas = document.getElementById('c');
-const ctx    = canvas.getContext('2d');
-const btn    = document.getElementById('start');
+const canvas=document.getElementById('c');
+const ctx=canvas.getContext('2d');
+const ui=document.getElementById('ui');
+const btn=document.getElementById('btn');
 
-let handLandmarker = null;
-let running = false;
-let W = 0, H = 0;
-let lastResults = null;
-let t0 = 0;
+let W,H,landmarker,vid,running=false,t0=0,lastResults=null,frameN=0;
 
-// ── State ──────────────────────────────────────────────────────────────────
-let shakeX = 0, shakeY = 0, shakeDecay = 0;
-let expl = { phase:0, timer:0, cx:0, cy:0 };
-let lastMerge = -10;
-let particles = [];
-let trails = { Left:[], Right:[] };
-const MERGE_DIST = 130;
+// ── State ───────────────────────────────────────────────────────────────────
+let particles=[];
+let trailL=[],trailR=[];
+let shakeX=0,shakeY=0;
+let expl={phase:0,timer:0,cx:0,cy:0};
+let lastMerge=-99;
+const MERGE=120;
 
-// ── Init ───────────────────────────────────────────────────────────────────
-btn.addEventListener('click', async () => {
-  btn.textContent = 'Loading...';
-  btn.disabled = true;
-  await initCamera();
-  await initMediaPipe();
-  t0 = performance.now();
-  running = true;
-  btn.style.display = 'none';
-  requestAnimationFrame(loop);
-});
+btn.onclick=async()=>{
+  btn.textContent='Loading...'; btn.disabled=true;
+  vid=document.createElement('video');
+  vid.autoplay=true; vid.playsInline=true;
+  const stream=await navigator.mediaDevices.getUserMedia({video:{width:960,height:540,facingMode:'user'}});
+  vid.srcObject=stream;
+  await new Promise(r=>vid.onloadedmetadata=r);
+  vid.play();
 
-async function initCamera() {
-  const stream = await navigator.mediaDevices.getUserMedia({ video:{facingMode:'user',width:1280,height:720} });
-  vid.srcObject = stream;
-  await new Promise(r => vid.onloadedmetadata = r);
-}
-
-async function initMediaPipe() {
-  const vision = await FilesetResolver.forVisionTasks(
-    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm"
-  );
-  handLandmarker = await HandLandmarker.createFromOptions(vision, {
-    baseOptions: { modelAssetPath:"https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task", delegate:"GPU" },
-    runningMode:"VIDEO", numHands:2,
-    minHandDetectionConfidence:0.6, minHandPresenceConfidence:0.6, minTrackingConfidence:0.5,
+  const fs=await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm");
+  landmarker=await HandLandmarker.createFromOptions(fs,{
+    baseOptions:{
+      modelAssetPath:"https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+      delegate:"CPU"
+    },
+    runningMode:"VIDEO",numHands:2,
+    minHandDetectionConfidence:0.5,
+    minHandPresenceConfidence:0.5,
+    minTrackingConfidence:0.4
   });
+
+  ui.style.display='none';
+  t0=performance.now();
+  running=true;
+  requestAnimationFrame(loop);
+};
+
+// ── Utils ────────────────────────────────────────────────────────────────────
+function resize(){W=canvas.width=window.innerWidth;H=canvas.height=window.innerHeight}
+window.addEventListener('resize',resize); resize();
+// Resize canvas only on window resize, NOT every frame
+
+function palmPos(lm){
+  const ids=[0,5,9,13,17];
+  let sx=0,sy=0;
+  ids.forEach(i=>{sx+=lm[i].x;sy+=lm[i].y});
+  return{x:(1-sx/5)*W, y:sy/5*H};
+}
+function palmR(lm){
+  return Math.hypot((lm[9].x-lm[0].x)*W,(lm[9].y-lm[0].y)*H)*1.1;
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
-function palmCenter(lm) {
-  const ids = [0,5,9,13,17];
-  let x=0,y=0;
-  ids.forEach(i=>{ x+=lm[i].x; y+=lm[i].y; });
-  return { x:(1-x/ids.length)*W, y:y/ids.length*H };
-}
-function palmRadius(lm) {
-  const dx=(lm[9].x-lm[0].x)*W, dy=(lm[9].y-lm[0].y)*H;
-  return Math.hypot(dx,dy)*1.1;
-}
-function dist(a,b){ return Math.hypot(a.x-b.x,a.y-b.y); }
-
-// ── Particles ──────────────────────────────────────────────────────────────
-function spawnParticles(cx,cy,n,colors,spd=14){
+// ── Particles ────────────────────────────────────────────────────────────────
+function spawnP(cx,cy,n,cols,spd){
   for(let i=0;i<n;i++){
-    const a=Math.random()*Math.PI*2, s=3+Math.random()*spd;
-    particles.push({
-      x:cx,y:cy,vx:Math.cos(a)*s,vy:Math.sin(a)*s,
-      life:25+Math.random()*35, maxLife:60,
-      color:colors[Math.floor(Math.random()*colors.length)],
-      size:2+Math.random()*4
-    });
+    const a=Math.random()*Math.PI*2,s=3+Math.random()*spd;
+    particles.push({x:cx,y:cy,vx:Math.cos(a)*s,vy:Math.sin(a)*s,
+      life:20+Math.random()*40,ml:60,
+      col:cols[Math.floor(Math.random()*cols.length)],
+      sz:1+Math.random()*4});
   }
 }
-function drawParticles(){
-  particles.forEach(p=>{
-    p.x+=p.vx; p.y+=p.vy;
-    p.vx*=0.91; p.vy*=0.91; p.vy+=0.22;
+function tickP(){
+  ctx.save();
+  particles=particles.filter(p=>{
+    p.x+=p.vx;p.y+=p.vy;
+    p.vx*=0.90;p.vy=p.vy*0.90+0.18;
     p.life--;
-    const a=p.life/p.maxLife;
-    ctx.globalAlpha=a*0.9;
-    ctx.fillStyle=p.color;
-    ctx.beginPath();
-    ctx.arc(p.x,p.y,p.size,0,Math.PI*2);
-    ctx.fill();
+    if(p.life<=0)return false;
+    ctx.globalAlpha=p.life/p.ml*0.9;
+    ctx.fillStyle=p.col;
+    ctx.beginPath();ctx.arc(p.x,p.y,p.sz,0,Math.PI*2);ctx.fill();
+    return true;
   });
-  ctx.globalAlpha=1;
-  particles=particles.filter(p=>p.life>0);
+  ctx.globalAlpha=1;ctx.restore();
 }
 
-// ── Trail ──────────────────────────────────────────────────────────────────
-function drawTrail(label,cx,cy,color){
-  const trail=trails[label];
-  trail.push({x:cx,y:cy});
-  if(trail.length>20) trail.shift();
-  for(let i=1;i<trail.length;i++){
-    const a=i/trail.length;
-    ctx.globalAlpha=a*0.55;
-    ctx.strokeStyle=color;
-    ctx.lineWidth=a*20;
+// ── Trail ────────────────────────────────────────────────────────────────────
+function pushTrail(arr,x,y){arr.push({x,y});if(arr.length>18)arr.shift();}
+function drawTrail(arr,col){
+  if(arr.length<2)return;
+  ctx.save();
+  for(let i=1;i<arr.length;i++){
+    const a=i/arr.length;
+    ctx.globalAlpha=a*0.45;
+    ctx.strokeStyle=col;
+    ctx.lineWidth=a*16;
     ctx.lineCap='round';
     ctx.beginPath();
-    ctx.moveTo(trail[i-1].x,trail[i-1].y);
-    ctx.lineTo(trail[i].x,trail[i].y);
+    ctx.moveTo(arr[i-1].x,arr[i-1].y);
+    ctx.lineTo(arr[i].x,arr[i].y);
     ctx.stroke();
   }
-  ctx.globalAlpha=1;
+  ctx.globalAlpha=1;ctx.restore();
 }
 
-// ── Orbital rings ──────────────────────────────────────────────────────────
-function drawOrbitalRings(cx,cy,r,t,color){
-  const configs=[
-    {scale:1.00, spd:1.6, phase:0.0,  tilt:0.28, w:2.5},
-    {scale:0.80, spd:-2.4,phase:1.05, tilt:0.50, w:1.5},
-    {scale:0.60, spd:3.2, phase:2.10, tilt:0.18, w:1.2},
-  ];
-  configs.forEach(cfg=>{
-    const rr=r*cfg.scale;
+// ── Orb ──────────────────────────────────────────────────────────────────────
+function drawOrb(cx,cy,r,mainCol,glowCol){
+  r=Math.max(25,Math.min(r,145));
+
+  // 1. Single glow pass (radial gradient, no loop)
+  const g1=ctx.createRadialGradient(cx,cy,r*0.3,cx,cy,r*2.4);
+  g1.addColorStop(0,glowCol.replace('A)','.35)'));
+  g1.addColorStop(1,'transparent');
+  ctx.fillStyle=g1;
+  ctx.beginPath();ctx.arc(cx,cy,r*2.4,0,Math.PI*2);ctx.fill();
+
+  // 2. Sphere (single radial gradient, top-left light)
+  const g2=ctx.createRadialGradient(cx-r*.3,cy-r*.3,r*.04,cx,cy,r);
+  g2.addColorStop(0,'rgba(255,255,255,.95)');
+  g2.addColorStop(.2,mainCol.replace('A)','.92)'));
+  g2.addColorStop(.75,mainCol.replace('A)','.55)'));
+  g2.addColorStop(1,mainCol.replace('A)','.1)'));
+  ctx.fillStyle=g2;
+  ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.fill();
+
+  // 3. Three ellipse rings — NO shadow, no save/restore inside
+  const rings=[{s:.95,sp:1.8,ph:0,ty:.28},{s:.75,sp:-2.5,ph:1.1,ty:.52},{s:.55,sp:3.1,ph:2.2,ty:.20}];
+  const now=performance.now()/1000;
+  rings.forEach(rg=>{
+    const angle=now*rg.sp+rg.ph;
     ctx.beginPath();
-    ctx.save();
-    ctx.translate(cx,cy);
-    ctx.rotate(t*cfg.spd+cfg.phase);
-    ctx.scale(1,cfg.tilt);
-    ctx.arc(0,0,rr,0,Math.PI*2);
-    ctx.restore();
-    ctx.strokeStyle=color;
-    ctx.lineWidth=cfg.w;
-    ctx.globalAlpha=0.85;
-    ctx.shadowColor=color;
-    ctx.shadowBlur=12;
+    ctx.ellipse(cx,cy,r*rg.s,r*rg.s*rg.ty,angle,0,Math.PI*2);
+    ctx.strokeStyle=mainCol.replace('A)','.75)');
+    ctx.lineWidth=1.6;
+    ctx.globalAlpha=0.80;
     ctx.stroke();
-    ctx.shadowBlur=0;
-    ctx.globalAlpha=1;
-  });
-}
-
-// ── Core orb ──────────────────────────────────────────────────────────────
-function drawCoreOrb(cx,cy,r,color,glowColor){
-  // Outer glow layers
-  for(let i=6;i>0;i--){
-    const gr=r+i*r*0.22;
-    const grad=ctx.createRadialGradient(cx,cy,0,cx,cy,gr);
-    grad.addColorStop(0,glowColor.replace('1)','${(0.06*i).toFixed(2)})'));
-    grad.addColorStop(1,'transparent');
-    ctx.globalAlpha=0.18*i/6;
-    ctx.fillStyle=glowColor;
-    ctx.beginPath(); ctx.arc(cx,cy,gr,0,Math.PI*2); ctx.fill();
-  }
-  ctx.globalAlpha=1;
-
-  // Main sphere gradient (3D shading)
-  const offX=r*0.28, offY=r*0.28;
-  const grad=ctx.createRadialGradient(cx-offX,cy-offY,r*0.05,cx,cy,r);
-  grad.addColorStop(0,'rgba(255,255,255,0.95)');
-  grad.addColorStop(0.15,color.replace('1)','0.95)'));
-  grad.addColorStop(0.6, color.replace('1)','0.75)'));
-  grad.addColorStop(1,   color.replace('1)','0.2)'));
-  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
-  ctx.fillStyle=grad; ctx.fill();
-
-  // Rim light
-  const rimGrad=ctx.createRadialGradient(cx+r*0.3,cy+r*0.3,r*0.5,cx,cy,r);
-  rimGrad.addColorStop(0,'transparent');
-  rimGrad.addColorStop(0.7,'transparent');
-  rimGrad.addColorStop(1,color.replace('1)','0.6)'));
-  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
-  ctx.fillStyle=rimGrad; ctx.fill();
-
-  // White centre point
-  const cGrad=ctx.createRadialGradient(cx,cy,0,cx,cy,r*0.35);
-  cGrad.addColorStop(0,'rgba(255,255,255,1)');
-  cGrad.addColorStop(0.4,'rgba(255,255,255,0.6)');
-  cGrad.addColorStop(1,'transparent');
-  ctx.fillStyle=cGrad;
-  ctx.beginPath(); ctx.arc(cx,cy,r*0.35,0,Math.PI*2); ctx.fill();
-
-  // Hard centre dot
-  ctx.fillStyle='white';
-  ctx.shadowColor='white'; ctx.shadowBlur=20;
-  ctx.beginPath(); ctx.arc(cx,cy,r*0.08,0,Math.PI*2); ctx.fill();
-  ctx.shadowBlur=0;
-}
-
-// ── Full orb ──────────────────────────────────────────────────────────────
-function drawOrb(cx,cy,radius,t,mainColor,glowColor,trailColor,label){
-  const r=Math.max(28,Math.min(radius,150));
-  drawTrail(label,cx,cy,trailColor);
-  drawOrbitalRings(cx,cy,r,t,mainColor);
-  drawCoreOrb(cx,cy,r,mainColor,glowColor);
-}
-
-// ── Shockwave ──────────────────────────────────────────────────────────────
-function drawShockwave(cx,cy,progress){
-  const maxR=W*0.70;
-  [0,0.06,0.13].forEach((off,i)=>{
-    const p2=Math.max(0,Math.min(1,progress-off));
-    if(p2<=0) return;
-    const rr=maxR*p2;
-    const fade=Math.max(0,1-p2);
-    ctx.globalAlpha=fade*0.9;
-    ctx.shadowColor=`rgba(180,0,255,${fade})`;
-    ctx.shadowBlur=20;
-    ctx.strokeStyle=`rgba(${Math.floor(140*fade)},0,255,${fade})`;
-    ctx.lineWidth=Math.max(1,14*fade);
-    ctx.beginPath(); ctx.arc(cx,cy,Math.max(1,rr),0,Math.PI*2); ctx.stroke();
-    // white inner ring
-    ctx.strokeStyle=`rgba(255,255,255,${fade*0.5})`;
-    ctx.lineWidth=Math.max(1,5*fade);
-    ctx.beginPath(); ctx.arc(cx,cy,Math.max(1,rr-8),0,Math.PI*2); ctx.stroke();
-    ctx.shadowBlur=0;
   });
   ctx.globalAlpha=1;
 
-  // Purple fill burst
-  if(progress<0.25){
-    const a=1-progress/0.25;
-    const fillR=maxR*progress*1.5;
-    const grad=ctx.createRadialGradient(cx,cy,0,cx,cy,fillR);
-    grad.addColorStop(0,`rgba(160,0,255,${a*0.7})`);
-    grad.addColorStop(1,'transparent');
-    ctx.fillStyle=grad;
-    ctx.beginPath(); ctx.arc(cx,cy,fillR,0,Math.PI*2); ctx.fill();
-  }
-
-  // HOLLOW PURPLE text
-  if(progress>0.04 && progress<0.60){
-    const a=Math.min(1,(1-(progress-0.04)/0.56));
-    const fs=Math.floor(W*0.055+progress*W*0.04);
-    ctx.font=`900 ${fs}px 'Segoe UI'`;
-    ctx.textAlign='center';
-    ctx.textBaseline='middle';
-    // shadow
-    ctx.fillStyle=`rgba(0,0,0,${a*0.8})`;
-    ctx.fillText('HOLLOW PURPLE',cx+4,cy+4);
-    // glow
-    ctx.shadowColor=`rgba(200,0,255,${a})`;
-    ctx.shadowBlur=30;
-    ctx.fillStyle=`rgba(220,80,255,${a})`;
-    ctx.fillText('HOLLOW PURPLE',cx,cy);
-    // white overlay
-    ctx.shadowBlur=0;
-    ctx.fillStyle=`rgba(255,255,255,${a*0.35})`;
-    ctx.fillText('HOLLOW PURPLE',cx,cy);
-    ctx.textAlign='left'; ctx.textBaseline='alphabetic';
-  }
+  // 4. White centre dot only
+  ctx.fillStyle='rgba(255,255,255,.95)';
+  ctx.beginPath();ctx.arc(cx,cy,r*.09,0,Math.PI*2);ctx.fill();
 }
 
-// ── Energy arc between hands ───────────────────────────────────────────────
-function drawArc(lp,rp,proximity){
-  const n=Math.floor(proximity*18);
+// ── Arc between hands ────────────────────────────────────────────────────────
+function drawArc(lp,rp,prox){
+  ctx.save();
+  const n=Math.floor(prox*14);
   for(let i=0;i<n;i++){
     const f=Math.random();
-    const bx=lp.x+f*(rp.x-lp.x)+(Math.random()-0.5)*proximity*18;
-    const by=lp.y+f*(rp.y-lp.y)+(Math.random()-0.5)*proximity*18;
-    const a=Math.random()*0.7+0.3;
-    ctx.globalAlpha=a*proximity;
+    const bx=lp.x+f*(rp.x-lp.x)+(Math.random()-.5)*prox*16;
+    const by=lp.y+f*(rp.y-lp.y)+(Math.random()-.5)*prox*16;
+    ctx.globalAlpha=Math.random()*prox*.8;
     ctx.fillStyle=`rgba(160,0,255,1)`;
-    ctx.beginPath();
-    ctx.arc(bx,by,Math.max(1,proximity*3),0,Math.PI*2);
-    ctx.fill();
+    ctx.beginPath();ctx.arc(bx,by,prox*2.5,0,Math.PI*2);ctx.fill();
   }
-  ctx.globalAlpha=1;
+  ctx.globalAlpha=1;ctx.restore();
 }
 
-// ── Main loop ──────────────────────────────────────────────────────────────
-let lastTs = 0;
+// ── Shockwave ────────────────────────────────────────────────────────────────
+function drawShockwave(cx,cy,prog){
+  const maxR=W*.68;
+  [0,.06,.13].forEach(off=>{
+    const p=Math.max(0,Math.min(1,prog-off));
+    if(!p)return;
+    const rr=maxR*p, fade=1-p;
+    ctx.strokeStyle=`rgba(160,0,255,${fade*.9})`;
+    ctx.lineWidth=Math.max(1,13*fade);
+    ctx.globalAlpha=fade;
+    ctx.beginPath();ctx.arc(cx,cy,Math.max(1,rr),0,Math.PI*2);ctx.stroke();
+    ctx.strokeStyle=`rgba(255,255,255,${fade*.4})`;
+    ctx.lineWidth=Math.max(1,4*fade);
+    ctx.beginPath();ctx.arc(cx,cy,Math.max(1,rr-6),0,Math.PI*2);ctx.stroke();
+  });
+  ctx.globalAlpha=1;
+
+  // Purple fill fade
+  if(prog<.28){
+    const a=1-prog/.28;
+    const g=ctx.createRadialGradient(cx,cy,0,cx,cy,maxR*prog*1.6);
+    g.addColorStop(0,`rgba(140,0,255,${a*.65})`);
+    g.addColorStop(1,'transparent');
+    ctx.fillStyle=g;
+    ctx.beginPath();ctx.arc(cx,cy,maxR*prog*1.6,0,Math.PI*2);ctx.fill();
+  }
+
+  // Text
+  if(prog>.04&&prog<.62){
+    const a=Math.min(1,1-(prog-.04)/.58);
+    const fs=Math.max(24,Math.floor(W*.05+prog*W*.035));
+    ctx.font=`900 ${fs}px sans-serif`;
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillStyle=`rgba(0,0,0,${a*.7})`;
+    ctx.fillText('HOLLOW PURPLE',cx+3,cy+3);
+    ctx.fillStyle=`rgba(210,60,255,${a})`;
+    ctx.fillText('HOLLOW PURPLE',cx,cy);
+    ctx.fillStyle=`rgba(255,255,255,${a*.3})`;
+    ctx.fillText('HOLLOW PURPLE',cx,cy);
+    ctx.textAlign='left';ctx.textBaseline='alphabetic';
+  }
+}
+
+// ── Main loop ─────────────────────────────────────────────────────────────────
 function loop(ts){
-  if(!running){ requestAnimationFrame(loop); return; }
+  if(!running){requestAnimationFrame(loop);return;}
+  frameN++;
   const t=(ts-t0)/1000;
-  const dt=ts-lastTs; lastTs=ts;
 
-  W=canvas.width=window.innerWidth;
-  H=canvas.height=window.innerHeight;
-
-  // Draw webcam (mirrored via CSS)
+  // Draw camera feed (mirrored)
   ctx.save();
-  ctx.translate(W,0); ctx.scale(-1,1);
+  ctx.translate(W,0);ctx.scale(-1,1);
   ctx.drawImage(vid,0,0,W,H);
   ctx.restore();
 
   // Dark overlay
-  ctx.fillStyle='rgba(0,0,0,0.42)';
+  ctx.fillStyle='rgba(0,0,0,.44)';
   ctx.fillRect(0,0,W,H);
 
-  // MediaPipe — run every 2nd frame only
-  if(handLandmarker && vid.readyState>=2 && Math.round(ts/16)%2===0){
-    try{ lastResults=handLandmarker.detectForVideo(vid,ts); }catch(e){}
+  // MediaPipe every 3rd frame
+  if(landmarker&&vid.readyState>=2&&frameN%3===0){
+    try{lastResults=landmarker.detectForVideo(vid,ts);}catch(e){}
   }
 
+  // Parse hands
   const hands={};
-  if(lastResults?.landmarks && lastResults?.handedness){
+  if(lastResults?.landmarks&&lastResults?.handedness){
     lastResults.landmarks.forEach((lm,i)=>{
-      const label=lastResults.handedness[i][0].categoryName;
-      // flip label because video is mirrored
-      const flipped=label==='Left'?'Right':'Left';
-      hands[flipped]={ pos:palmCenter(lm), r:palmRadius(lm) };
+      const raw=lastResults.handedness[i][0].categoryName;
+      const label=raw==='Left'?'Right':'Left'; // mirror flip
+      hands[label]={p:palmPos(lm),r:palmR(lm)};
     });
   }
 
   // Proximity
-  let proximity=0;
-  if(hands.Left && hands.Right){
-    const d=dist(hands.Left.pos,hands.Right.pos);
-    proximity=Math.max(0,1-d/320);
-    if(proximity>0.25 && expl.phase===0){
-      shakeX=(Math.random()-0.5)*proximity*16;
-      shakeY=(Math.random()-0.5)*proximity*16;
-      shakeDecay=0.85;
-    }
-    if(proximity>0.06 && expl.phase===0)
-      drawArc(hands.Left.pos,hands.Right.pos,proximity);
+  let prox=0;
+  if(hands.Left&&hands.Right){
+    const lp=hands.Left.p,rp=hands.Right.p;
+    const d=Math.hypot(rp.x-lp.x,rp.y-lp.y);
+    prox=Math.max(0,1-d/300);
 
-    if(d<MERGE_DIST && (t-lastMerge)>2.5 && expl.phase===0){
-      expl={phase:1,timer:0,cx:(hands.Left.pos.x+hands.Right.pos.x)/2,cy:(hands.Left.pos.y+hands.Right.pos.y)/2};
+    if(prox>.22&&expl.phase===0){
+      shakeX=(Math.random()-.5)*prox*14;
+      shakeY=(Math.random()-.5)*prox*14;
+    }
+    if(prox>.05&&expl.phase===0) drawArc(lp,rp,prox);
+
+    if(d<MERGE&&(t-lastMerge)>2.5&&expl.phase===0){
+      expl={phase:1,timer:0,cx:(lp.x+rp.x)/2,cy:(lp.y+rp.y)/2};
       lastMerge=t;
-      shakeX=20; shakeY=20; shakeDecay=0.80;
-      spawnParticles(expl.cx,expl.cy,180,
-        ['rgba(180,0,255,1)','rgba(220,60,255,1)','rgba(100,0,200,1)','rgba(255,200,255,1)'],16);
-      trails.Left=[]; trails.Right=[];
+      shakeX=18;shakeY=18;
+      spawnP(expl.cx,expl.cy,150,
+        ['rgba(180,0,255,1)','rgba(220,70,255,1)','rgba(100,0,200,1)','rgba(255,200,255,1)'],15);
+      trailL=[];trailR=[];
     }
   }
 
-  // Screen shake
-  if(Math.abs(shakeX)>0.5){
+  // Shake
+  if(Math.abs(shakeX)>.5){
     ctx.save();
     ctx.translate(shakeX,shakeY);
-    shakeX*=shakeDecay; shakeY*=shakeDecay;
+    shakeX*=.80;shakeY*=.80;
   }
 
   // Draw orbs
   if(expl.phase===0){
     if(hands.Right){
-      const {pos,r}=hands.Right;
-      drawOrb(pos.x,pos.y,r,t,
-        'rgba(80,160,255,1)','rgba(40,120,255,',
-        'rgba(60,130,255,0.4)','Right');
+      const{p,r}=hands.Right;
+      pushTrail(trailR,p.x,p.y);
+      drawTrail(trailR,'rgba(60,130,255,.4)');
+      drawOrb(p.x,p.y,r,'rgba(70,150,255,A)','rgba(70,150,255,A)');
     }
     if(hands.Left){
-      const {pos,r}=hands.Left;
-      drawOrb(pos.x,pos.y,r,t,
-        'rgba(255,40,40,1)','rgba(220,20,20,',
-        'rgba(200,30,30,0.4)','Left');
+      const{p,r}=hands.Left;
+      pushTrail(trailL,p.x,p.y);
+      drawTrail(trailL,'rgba(255,40,40,.4)');
+      drawOrb(p.x,p.y,r,'rgba(255,50,50,A)','rgba(255,50,50,A)');
     }
   }
 
-  // Explosion phases
+  // Explosion
   if(expl.phase===1){
     const fade=Math.max(0,1-expl.timer/8);
-    ctx.fillStyle=`rgba(255,255,255,${fade*0.92})`;
+    ctx.fillStyle=`rgba(255,255,255,${fade*.9})`;
     ctx.fillRect(0,0,W,H);
-    // Purple burst
-    const br=expl.timer*22;
-    const grad=ctx.createRadialGradient(expl.cx,expl.cy,0,expl.cx,expl.cy,Math.max(1,br));
-    grad.addColorStop(0,`rgba(180,0,255,${fade*0.85})`);
-    grad.addColorStop(1,'transparent');
-    ctx.fillStyle=grad;
-    ctx.beginPath(); ctx.arc(expl.cx,expl.cy,Math.max(1,br),0,Math.PI*2); ctx.fill();
+    const bg=ctx.createRadialGradient(expl.cx,expl.cy,0,expl.cx,expl.cy,Math.max(1,expl.timer*20));
+    bg.addColorStop(0,`rgba(160,0,255,${fade*.8})`);
+    bg.addColorStop(1,'transparent');
+    ctx.fillStyle=bg;
+    ctx.beginPath();ctx.arc(expl.cx,expl.cy,Math.max(1,expl.timer*20),0,Math.PI*2);ctx.fill();
     expl.timer++;
-    if(expl.timer>8){ expl.phase=2; expl.timer=0; }
+    if(expl.timer>8){expl.phase=2;expl.timer=0;}
   } else if(expl.phase===2){
-    drawShockwave(expl.cx,expl.cy,expl.timer/44);
-    if(expl.timer%3===0)
-      spawnParticles(expl.cx,expl.cy,8,['rgba(160,0,255,1)','rgba(100,0,180,1)'],7);
+    drawShockwave(expl.cx,expl.cy,expl.timer/42);
+    if(expl.timer%4===0) spawnP(expl.cx,expl.cy,8,['rgba(160,0,255,1)','rgba(100,0,180,1)'],7);
     expl.timer++;
-    if(expl.timer>44){ expl.phase=3; expl.timer=0; }
+    if(expl.timer>42){expl.phase=3;expl.timer=0;}
   } else if(expl.phase===3){
     expl.timer++;
-    if(expl.timer>55 && particles.length<5) expl.phase=0;
+    if(expl.timer>50&&particles.length<5) expl.phase=0;
   }
 
-  drawParticles();
+  tickP();
 
-  if(Math.abs(shakeX)>0.5) ctx.restore();
+  if(Math.abs(shakeX)>.5) ctx.restore();
 
   // Vignette
-  const vig=ctx.createRadialGradient(W/2,H/2,H*0.3,W/2,H/2,H*0.85);
+  const vig=ctx.createRadialGradient(W/2,H/2,H*.28,W/2,H/2,H*.82);
   vig.addColorStop(0,'transparent');
-  vig.addColorStop(1,'rgba(0,0,0,0.65)');
-  ctx.fillStyle=vig; ctx.fillRect(0,0,W,H);
+  vig.addColorStop(1,'rgba(0,0,0,.62)');
+  ctx.fillStyle=vig;ctx.fillRect(0,0,W,H);
 
   requestAnimationFrame(loop);
 }
