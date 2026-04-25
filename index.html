@@ -259,26 +259,19 @@ function loop(ts){
     try{lastResults=landmarker.detectForVideo(vid,ts);}catch(e){}
   }
 
-  // DEBUG — red dot where MediaPipe detects palm
+  // no debug dots needed
+
+  // Parse hands — no label mapping, just order of detection
+  const handsArr=[];
   if(lastResults?.landmarks){
     lastResults.landmarks.forEach((lm,i)=>{
-      const raw=lastResults.handedness[i][0].categoryName;
-      const label=raw==='Left'?'Right':'Left';
-      const p=palmPos(lm);
-      ctx.fillStyle= label==='Right'?'cyan':'orange';
-      ctx.beginPath();ctx.arc(p.x,p.y,12,0,Math.PI*2);ctx.fill();
+      handsArr.push({p:palmPos(lm),r:palmR(lm)});
     });
   }
-
-  // Parse hands
-  const hands={};
-  if(lastResults?.landmarks&&lastResults?.handedness){
-    lastResults.landmarks.forEach((lm,i)=>{
-      const raw=lastResults.handedness[i][0].categoryName;
-      const label=raw==='Left'?'Right':'Left'; // mediapipe is mirrored
-      hands[label]={p:palmPos(lm),r:palmR(lm)};
-    });
-  }
+  const handColors=[
+    {main:'rgba(70,150,255,A)',glow:'rgba(70,150,255,A)',trail:'rgba(60,130,255,.4)'},
+    {main:'rgba(255,50,50,A)', glow:'rgba(255,50,50,A)', trail:'rgba(200,30,30,.4)'},
+  ];
 
   // Proximity
   let prox=0;
