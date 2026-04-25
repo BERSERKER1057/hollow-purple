@@ -79,12 +79,20 @@ function palmPos(lm){
   const ids=[0,5,9,13,17];
   let sx=0,sy=0;
   ids.forEach(i=>{sx+=lm[i].x;sy+=lm[i].y});
-  // x is already flipped via (1 - x) to match mirrored video
-  return{x:(1-sx/5)*W, y:sy/5*H};
+  const nx=1-sx/5; // flip x for mirror
+  const ny=sy/5;
+  // Map normalized coords into the actual rendered video rect
+  const vdx=window._vdx||0, vdy=window._vdy||0;
+  const vdw=window._vdw||W, vdh=window._vdh||H;
+  return{
+    x: (W - (nx*vdw + vdx)), // re-mirror the x offset
+    y: ny*vdh + vdy
+  };
 }
 function palmR(lm){
-  const scaleX=(lm[9].x-lm[0].x)*W;
-  const scaleY=(lm[9].y-lm[0].y)*H;
+  const vdw=window._vdw||W, vdh=window._vdh||H;
+  const scaleX=(lm[9].x-lm[0].x)*vdw;
+  const scaleY=(lm[9].y-lm[0].y)*vdh;
   return Math.hypot(scaleX,scaleY)*1.0;
 }
 
@@ -245,6 +253,8 @@ function loop(ts){
   else{dw=W;dh=W/vr;dy=-(dh-H)/2;}
   ctx.drawImage(vid,dx,dy,dw,dh);
   ctx.restore();
+  // Store video render params for coordinate mapping
+  window._vdx=dx; window._vdy=dy; window._vdw=dw; window._vdh=dh;
 
   // Dark overlay
   ctx.fillStyle='rgba(0,0,0,.44)';
@@ -253,6 +263,17 @@ function loop(ts){
   // MediaPipe every 3rd frame
   if(landmarker&&vid.readyState>=2&&frameN%3===0){
     try{lastResults=landmarker.detectForVideo(vid,ts);}catch(e){}
+  }
+
+  // DEBUG — red dot where MediaPipe detects palm
+  if(lastResults?.landmarks){
+    lastResults.landmarks.forEach((lm,i)=>{
+      const raw=lastResults.handedness[i][0].categoryName;
+      const label=raw==='Left'?'Right':'Left';
+      const p=palmPos(lm);
+      ctx.fillStyle= label==='Right'?'cyan':'orange';
+      ctx.beginPath();ctx.arc(p.x,p.y,12,0,Math.PI*2);ctx.fill();
+    });
   }
 
   // Parse hands
