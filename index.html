@@ -79,20 +79,14 @@ function palmPos(lm){
   const ids=[0,5,9,13,17];
   let sx=0,sy=0;
   ids.forEach(i=>{sx+=lm[i].x;sy+=lm[i].y});
-  const nx=1-sx/5; // flip x for mirror
+  const nx=sx/5;
   const ny=sy/5;
-  // Map normalized coords into the actual rendered video rect
-  const vdx=window._vdx||0, vdy=window._vdy||0;
-  const vdw=window._vdw||W, vdh=window._vdh||H;
-  return{
-    x: (W - (nx*vdw + vdx)), // re-mirror the x offset
-    y: ny*vdh + vdy
-  };
+  // Direct mapping — video CSS mirrors via scaleX(-1) so x is already correct
+  return{ x: nx*W, y: ny*H };
 }
 function palmR(lm){
-  const vdw=window._vdw||W, vdh=window._vdh||H;
-  const scaleX=(lm[9].x-lm[0].x)*vdw;
-  const scaleY=(lm[9].y-lm[0].y)*vdh;
+  const scaleX=(lm[9].x-lm[0].x)*W;
+  const scaleY=(lm[9].y-lm[0].y)*H;
   return Math.hypot(scaleX,scaleY)*1.0;
 }
 
@@ -281,7 +275,7 @@ function loop(ts){
   if(lastResults?.landmarks&&lastResults?.handedness){
     lastResults.landmarks.forEach((lm,i)=>{
       const raw=lastResults.handedness[i][0].categoryName;
-      const label=raw==='Left'?'Right':'Left'; // mirror flip
+      const label=raw==='Left'?'Right':'Left'; // mediapipe is mirrored
       hands[label]={p:palmPos(lm),r:palmR(lm)};
     });
   }
