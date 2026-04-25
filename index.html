@@ -82,7 +82,7 @@ function palmPos(lm){
   const nx=sx/5;
   const ny=sy/5;
   // Direct mapping — video CSS mirrors via scaleX(-1) so x is already correct
-  return{ x: nx*W, y: ny*H };
+  return{ x: (1-nx)*W, y: ny*H };
 }
 function palmR(lm){
   const scaleX=(lm[9].x-lm[0].x)*W;
